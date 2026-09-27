@@ -28,6 +28,18 @@ public class MovePlan {
     @Column(nullable = false, length = 20)
     private PlanStatus status = PlanStatus.PENDING;
 
+    /** 计划用途：MANUAL 手工计划 / OUTBOUND_APPOINTMENT 出场预约前置移箱。 */
+    @Column(length = 40)
+    private String purpose;
+
+    /** 关联业务号（如出场预约号）。 */
+    @Column(length = 64)
+    private String refNo;
+
+    /** 出场预约中最终要提走的目标箱号。 */
+    @Column(name = "target_container_no", length = 32)
+    private String targetContainerNo;
+
     @Column(nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
 
@@ -65,6 +77,17 @@ public class MovePlan {
         this.resultMessage = message;
     }
 
+    public void markCancelled(String message) {
+        this.status = PlanStatus.CANCELLED;
+        this.resultMessage = message;
+    }
+
+    public void tagOutboundAppointment(String appointmentNo, String targetContainerNo) {
+        this.purpose = "OUTBOUND_APPOINTMENT";
+        this.refNo = appointmentNo;
+        this.targetContainerNo = targetContainerNo;
+    }
+
     public Long getId() {
         return id;
     }
@@ -83,6 +106,18 @@ public class MovePlan {
 
     public String getResultMessage() {
         return resultMessage;
+    }
+
+    public String getPurpose() {
+        return purpose;
+    }
+
+    public String getRefNo() {
+        return refNo;
+    }
+
+    public String getTargetContainerNo() {
+        return targetContainerNo;
     }
 
     public List<MovePlanStep> getSteps() {

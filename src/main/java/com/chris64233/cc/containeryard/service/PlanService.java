@@ -60,6 +60,67 @@ public class PlanService {
         return sim.run(request.steps());
     }
 
+    /**
+     * 为提走目标箱生成必要的前置移箱步骤：把压在目标箱上方的箱从栈顶开始逐个
+     * 搬到其它可容纳（同时满足高度、重量及已预留容量）的堆栈。目标箱已在栈顶时
+     * 返回空列表。模拟全程执行，任一步无可用目标堆栈即规划失败。
+     *
+     * <p>不加事务边界：仅在预约服务的事务内调用，规划失败抛出的异常需要被外层
+     * 捕获（重排失败保留预约），独立的事务拦截器会把共享事务标记为 rollback-only。
+     */
+    public List<StepRequest> planRetrievalSteps(String targetContainerNo) {
+        Simulation sim = Simulation.load(stackRepository.findAll(), containerRepository.findAll());
+        return sim.retrievalSteps(targetContainerNo);
+    }
+
+    /**
+     * 为出场预约保存一份前置移箱计划（带版本快照）。步骤为空时返回 {@code null}
+     * （目标箱已在栈顶，无需前置计划）。运行于调用方事务内。
+     */
+    public Long saveOutboundPlan(String appointmentNo, String targetContainerNo, List<StepRequest> steps) {
+        if (steps.isEmpty()) {
+            return null;
+        }
+        Simulation sim = Simulation.load(stackRepository.findAll(), containerRepository.findAll());
+        SimulationResult result = sim.run(steps);
+        if (!result.valid()) {
+            throw new PlanValidationException(result);
+        }
+        Map<String, YardStack> stacksByCode = stackRepository.findAll().stream()
+                .collect(Collectors.toMap(YardStack::getCode, Function.identity()));
+
+        MovePlan plan = new MovePlan();
+        int seq = 1;
+        for (StepRequest step : steps) {
+            plan.addStep(seq++, step.containerNo(), step.targetStack());
+        }
+        for (String code : sim.involvedStacks()) {
+            plan.addSnapshot(code, stacksByCode.get(code).getVersion());
+        }
+        plan.tagOutboundAppointment(appointmentNo, targetContainerNo);
+        planRepository.save(plan);
+        entityManager.flush();
+        return plan.getId();
+    }
+
+    /** 取消一份尚未执行的前置移箱计划。运行于调用方事务内。 */
+    public void cancelPendingPlan(Long planId, String message) {
+        if (planId == null) {
+            return;
+        }
+        MovePlan plan = planRepository.findByIdForUpdate(planId)
+                .orElseThrow(() -> new NotFoundException("移箱计划不存在: " + planId));
+        if (plan.getStatus() == PlanStatus.PENDING) {
+            plan.markCancelled(message);
+        }
+    }
+
+    /** 基于当前堆场布局重新规划出场前置移箱，返回新计划 id（目标箱已在栈顶时为 null）。 */
+    public Long replanOutbound(String appointmentNo, String targetContainerNo) {
+        List<StepRequest> steps = planRetrievalSteps(targetContainerNo);
+        return saveOutboundPlan(appointmentNo, targetContainerNo, steps);
+    }
+
     @Transactional
     public PlanView createPlan(PlanRequest request) {
         Simulation sim = Simulation.load(stackRepository.findAll(), containerRepository.findAll());
@@ -89,6 +150,14 @@ public class PlanService {
 
     @Transactional
     public ExecuteResult execute(Long planId) {
+        return executeInternal(planId);
+    }
+
+    /**
+     * 执行逻辑本体，不带事务边界：供预约服务在其事务内联调（如出场到场），
+     * 执行失败抛出的异常由调用方决定重试/保留，而不会把共享事务污染为 rollback-only。
+     */
+    public ExecuteResult executeInternal(Long planId) {
         MovePlan plan = planRepository.findByIdForUpdate(planId)
                 .orElseThrow(() -> new NotFoundException("计划不存在: " + planId));
 
@@ -98,6 +167,10 @@ public class PlanService {
         }
         if (plan.getStatus() == PlanStatus.STALE_REJECTED) {
             return new ExecuteResult(plan.getId(), PlanStatus.STALE_REJECTED,
+                    plan.getResultMessage(), List.of());
+        }
+        if (plan.getStatus() == PlanStatus.CANCELLED) {
+            return new ExecuteResult(plan.getId(), PlanStatus.CANCELLED,
                     plan.getResultMessage(), List.of());
         }
 
@@ -146,8 +219,8 @@ public class PlanService {
         if (container.getTier() != source.getCurrentTiers()) {
             throw new IllegalStateException("箱 " + step.getContainerNo() + " 不在栈顶，无法移动");
         }
-        if (!target.canAccept(container.getWeight())) {
-            throw new IllegalStateException("目标堆栈 " + target.getCode() + " 层数或重量超限");
+        if (!target.canReserve(container.getWeight())) {
+            throw new IllegalStateException("目标堆栈 " + target.getCode() + " 层数或重量超限（含已预留堆位）");
         }
 
         int fromTier = container.getTier();
@@ -178,13 +251,17 @@ public class PlanService {
             final String code;
             final int maxTiers;
             final long maxWeight;
+            final int reservedTiers;
+            final long reservedWeight;
             final Deque<String> containers = new ArrayDeque<>();
             long currentWeight;
 
-            SimStack(String code, int maxTiers, long maxWeight) {
+            SimStack(String code, int maxTiers, long maxWeight, int reservedTiers, long reservedWeight) {
                 this.code = code;
                 this.maxTiers = maxTiers;
                 this.maxWeight = maxWeight;
+                this.reservedTiers = reservedTiers;
+                this.reservedWeight = reservedWeight;
             }
         }
 
@@ -200,7 +277,8 @@ public class PlanService {
         static Simulation load(List<YardStack> stacks, List<Container> containers) {
             Map<String, SimStack> simStacks = new HashMap<>();
             for (YardStack s : stacks) {
-                simStacks.put(s.getCode(), new SimStack(s.getCode(), s.getMaxTiers(), s.getMaxWeight()));
+                simStacks.put(s.getCode(), new SimStack(s.getCode(), s.getMaxTiers(), s.getMaxWeight(),
+                        s.getReservedTiers(), s.getReservedWeight()));
             }
             Map<String, SimContainer> simContainers = new HashMap<>();
             containers.stream()
@@ -217,6 +295,49 @@ public class PlanService {
 
         Set<String> involvedStacks() {
             return involved;
+        }
+
+        /**
+         * 生成提走目标箱所需的前置移箱：把压在它上方的箱逐个搬到按编码排序后
+         * 第一个可容纳的其它堆栈。目标箱已在栈顶时返回空列表；无可用堆栈则失败。
+         */
+        List<StepRequest> retrievalSteps(String targetNo) {
+            SimContainer target = containers.get(targetNo);
+            if (target == null) {
+                throw new IllegalStateException("箱不存在: " + targetNo);
+            }
+            SimStack source = stacks.get(target.stackCode());
+            List<String> topToBottom = new ArrayList<>(source.containers);
+            java.util.Collections.reverse(topToBottom);
+            int targetIndex = topToBottom.indexOf(targetNo);
+
+            List<StepRequest> steps = new ArrayList<>();
+            for (int i = 0; i < targetIndex; i++) {
+                String blockerNo = topToBottom.get(i);
+                SimContainer blocker = containers.get(blockerNo);
+                String dest = chooseDestination(blocker);
+                if (dest == null) {
+                    throw new IllegalStateException(
+                            "箱 " + blockerNo + " 没有可安置的目标堆栈，无法为 " + targetNo + " 生成提箱计划");
+                }
+                String error = applyStep(new StepRequest(blockerNo, dest));
+                if (error != null) {
+                    throw new IllegalStateException(error);
+                }
+                steps.add(new StepRequest(blockerNo, dest));
+            }
+            return steps;
+        }
+
+        private String chooseDestination(SimContainer container) {
+            return stacks.keySet().stream().sorted()
+                    .filter(code -> !code.equals(container.stackCode()))
+                    .map(stacks::get)
+                    .filter(t -> t.containers.size() + t.reservedTiers < t.maxTiers
+                            && t.currentWeight + t.reservedWeight + container.weight() <= t.maxWeight)
+                    .map(t -> t.code)
+                    .findFirst()
+                    .orElse(null);
         }
 
         SimulationResult run(List<StepRequest> steps) {
@@ -255,10 +376,10 @@ public class PlanService {
             if (!source.containers.peekLast().equals(step.containerNo())) {
                 return "箱 " + step.containerNo() + " 不在堆栈 " + source.code + " 栈顶";
             }
-            if (target.containers.size() >= target.maxTiers) {
+            if (target.containers.size() + target.reservedTiers >= target.maxTiers) {
                 return "目标堆栈 " + target.code + " 层数超限";
             }
-            if (target.currentWeight + container.weight() > target.maxWeight) {
+            if (target.currentWeight + target.reservedWeight + container.weight() > target.maxWeight) {
                 return "目标堆栈 " + target.code + " 重量超限";
             }
             source.containers.pollLast();

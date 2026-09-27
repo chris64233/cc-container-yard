@@ -56,7 +56,8 @@ public class YardService {
 
     private StackView toView(YardStack stack, List<Container> containers) {
         return new StackView(stack.getCode(), stack.getMaxTiers(), stack.getMaxWeight(),
-                stack.getCurrentTiers(), stack.getCurrentWeight(), stack.getVersion(),
+                stack.getCurrentTiers(), stack.getCurrentWeight(),
+                stack.getReservedTiers(), stack.getReservedWeight(), stack.getVersion(),
                 containers.stream()
                         .map(c -> new StackView.ContainerView(c.getContainerNo(), c.getWeight(), c.getTier()))
                         .toList());

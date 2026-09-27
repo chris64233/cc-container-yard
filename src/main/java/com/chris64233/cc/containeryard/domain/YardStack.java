@@ -31,6 +31,14 @@ public class YardStack {
     @Column(nullable = false)
     private long currentWeight;
 
+    /** 已被进场预约预留、尚未实际落位的层数。 */
+    @Column(nullable = false)
+    private int reservedTiers;
+
+    /** 已被进场预约预留、尚未实际落位的重量。 */
+    @Column(nullable = false)
+    private long reservedWeight;
+
     @Version
     private long version;
 
@@ -60,6 +68,38 @@ public class YardStack {
         currentWeight -= containerWeight;
     }
 
+    /** 是否还能再预留一个进场堆位（同时满足高度与重量限制）。 */
+    public boolean canReserve(long containerWeight) {
+        return currentTiers + reservedTiers < maxTiers
+                && currentWeight + reservedWeight + containerWeight <= maxWeight;
+    }
+
+    public void reserve(long containerWeight) {
+        if (!canReserve(containerWeight)) {
+            throw new IllegalStateException("堆栈 " + code + " 可预留高度或重量不足");
+        }
+        reservedTiers++;
+        reservedWeight += containerWeight;
+    }
+
+    public void releaseReservation(long containerWeight) {
+        if (reservedTiers <= 0 || reservedWeight < containerWeight) {
+            throw new IllegalStateException("堆栈 " + code + " 没有可释放的堆位预留");
+        }
+        reservedTiers--;
+        reservedWeight -= containerWeight;
+    }
+
+    /** 进场预约实际落位：预留转为实际占用。 */
+    public void consumeReserved(long containerWeight) {
+        if (reservedTiers <= 0 || reservedWeight < containerWeight) {
+            throw new IllegalStateException("堆栈 " + code + " 没有对应的堆位预留");
+        }
+        reservedTiers--;
+        reservedWeight -= containerWeight;
+        addTop(containerWeight);
+    }
+
     public Long getId() {
         return id;
     }
@@ -82,6 +122,14 @@ public class YardStack {
 
     public long getCurrentWeight() {
         return currentWeight;
+    }
+
+    public int getReservedTiers() {
+        return reservedTiers;
+    }
+
+    public long getReservedWeight() {
+        return reservedWeight;
     }
 
     public long getVersion() {

@@ -17,8 +17,12 @@ public class MoveEvent {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, updatable = false)
+    @Column(updatable = false)
     private Long planId;
+
+    /** 业务来源号：手工/前置移箱为预约号，闸口落箱提箱为到场业务号。 */
+    @Column(name = "ref_no", updatable = false, length = 64)
+    private String refNo;
 
     @Column(nullable = false, updatable = false)
     private int seq;
@@ -26,10 +30,10 @@ public class MoveEvent {
     @Column(nullable = false, updatable = false, length = 32)
     private String containerNo;
 
-    @Column(nullable = false, updatable = false, length = 32)
+    @Column(name = "from_stack_code", updatable = false, length = 32)
     private String fromStackCode;
 
-    @Column(nullable = false, updatable = false, length = 32)
+    @Column(name = "to_stack_code", updatable = false, length = 32)
     private String toStackCode;
 
     @Column(nullable = false, updatable = false)
@@ -50,7 +54,15 @@ public class MoveEvent {
     public MoveEvent(Long planId, int seq, String containerNo,
                      String fromStackCode, String toStackCode,
                      int fromTier, int toTier, long containerWeight) {
+        this(planId, null, seq, containerNo, fromStackCode, toStackCode,
+                fromTier, toTier, containerWeight);
+    }
+
+    public MoveEvent(Long planId, String refNo, int seq, String containerNo,
+                     String fromStackCode, String toStackCode,
+                     int fromTier, int toTier, long containerWeight) {
         this.planId = planId;
+        this.refNo = refNo;
         this.seq = seq;
         this.containerNo = containerNo;
         this.fromStackCode = fromStackCode;
@@ -66,6 +78,10 @@ public class MoveEvent {
 
     public Long getPlanId() {
         return planId;
+    }
+
+    public String getRefNo() {
+        return refNo;
     }
 
     public int getSeq() {

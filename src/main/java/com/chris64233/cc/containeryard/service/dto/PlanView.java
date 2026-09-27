@@ -6,7 +6,8 @@ import com.chris64233.cc.containeryard.domain.PlanStatus;
 import java.time.Instant;
 import java.util.List;
 
-public record PlanView(Long id, PlanStatus status, Instant createdAt, Instant executedAt,
+public record PlanView(Long id, PlanStatus status, String purpose, String refNo,
+                       String targetContainerNo, Instant createdAt, Instant executedAt,
                        String resultMessage, List<StepView> steps, List<SnapshotView> snapshots) {
 
     public record StepView(int seq, String containerNo, String targetStack) {
@@ -19,6 +20,9 @@ public record PlanView(Long id, PlanStatus status, Instant createdAt, Instant ex
         return new PlanView(
                 plan.getId(),
                 plan.getStatus(),
+                plan.getPurpose(),
+                plan.getRefNo(),
+                plan.getTargetContainerNo(),
                 plan.getCreatedAt(),
                 plan.getExecutedAt(),
                 plan.getResultMessage(),
