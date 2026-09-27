@@ -1,5 +1,6 @@
 package com.chris64233.cc.containeryard.web;
 
+import com.chris64233.cc.containeryard.service.AppointmentConflictException;
 import com.chris64233.cc.containeryard.service.DuplicateException;
 import com.chris64233.cc.containeryard.service.NotFoundException;
 import com.chris64233.cc.containeryard.service.PlanValidationException;
@@ -22,6 +23,11 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(DuplicateException.class)
     public ResponseEntity<Map<String, String>> duplicate(DuplicateException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", ex.getMessage()));
+    }
+
+    @ExceptionHandler(AppointmentConflictException.class)
+    public ResponseEntity<Map<String, String>> appointmentConflict(AppointmentConflictException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", ex.getMessage()));
     }
 

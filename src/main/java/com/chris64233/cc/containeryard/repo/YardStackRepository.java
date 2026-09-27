@@ -18,6 +18,14 @@ public interface YardStackRepository extends JpaRepository<YardStack, Long> {
     List<YardStack> findAllByOrderByCode();
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from YardStack s where s.code = :code")
+    Optional<YardStack> findByCodeForUpdate(@Param("code") String code);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from YardStack s order by s.code")
+    List<YardStack> findAllByOrderByCodeForUpdate();
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select s from YardStack s where s.code in :codes order by s.code")
     List<YardStack> findAllByCodeInForUpdate(@Param("codes") Collection<String> codes);
 }
